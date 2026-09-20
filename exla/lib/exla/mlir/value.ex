@@ -139,8 +139,12 @@ defmodule EXLA.MLIR.Value do
   end
 
   def erf(%Value{function: func} = operand, %{type: {:f, 32}} = typespec) do
-    # The f32 erf approximation loses accuracy near saturation. Use erfc
-    # outside the central interval, where subtraction from one is stable.
+    # The xla 0.10.0 package uses OpenXLA bb760b047bdb, whose f32 erf lowering
+    # can return ~0.9999998 for large positive inputs instead of rounding to 1.0.
+    # Use erfc outside the central interval, where subtraction from one is stable.
+    # OpenXLA fixed saturation in 9b21f50d2d (2026-04-24). Remove this workaround
+    # once supported XLA builds include that fix and pass the accuracy regressions
+    # without it.
     result_types = typespecs_to_mlir_types([typespec])
     central = op(func, "chlo.erf", [operand], result_types) |> one!()
     magnitude = abs(operand, typespec)
