@@ -802,6 +802,63 @@ defmodule EXLA.Defn.ExprTest do
   end
 
   describe "unary float ops" do
+    test "f32 erf saturates accurately, including vectorized inputs" do
+      input = Nx.tensor([[-100.0, -8.0, -6.0], [6.0, 8.0, 100.0]]) |> Nx.vectorize(:batch)
+      expected = Nx.tensor([[-1.0, -1.0, -1.0], [1.0, 1.0, 1.0]]) |> Nx.vectorize(:batch)
+      assert_equal(unary_erf(input), expected)
+      assert_equal(unary_erf(Nx.tensor(6.0)), Nx.tensor(1.0))
+    end
+
+    test "f32 erf is accurate across the central and tail intervals" do
+      values = [
+        -4.0,
+        -3.5,
+        -3.0,
+        -2.0,
+        -1.0001,
+        -1.0,
+        -0.9999,
+        -0.1,
+        0.0,
+        0.1,
+        0.9999,
+        1.0,
+        1.0001,
+        2.0,
+        3.0,
+        3.5,
+        4.0
+      ]
+
+      expected = Nx.tensor(Enum.map(values, &:math.erf/1))
+      assert_all_close(unary_erf(Nx.tensor(values)), expected, atol: 6.0e-8, rtol: 0.0)
+    end
+
+    test "erf preserves nonfinite values and signed zero" do
+      actual = unary_erf(Nx.tensor([:neg_infinity, :infinity, :nan, -0.0, 0.0]))
+      assert_equal(Nx.slice(actual, [0], [2]), Nx.tensor([-1.0, 1.0]))
+      assert_equal(Nx.is_nan(actual[2]), Nx.tensor(1, type: :u8))
+
+      assert_equal(
+        Nx.bitcast(Nx.slice(actual, [3], [2]), :u32),
+        Nx.tensor([2_147_483_648, 0], type: :u32)
+      )
+    end
+
+    test "erf gradient through a nonlinear composition" do
+      values = [-6.0, -3.0, -1.0, 0.0, 1.0, 3.0, 6.0]
+      actual = jit(fn x -> grad(x, fn x -> Nx.sum(Nx.sin(Nx.erf(x))) end) end).(Nx.tensor(values))
+
+      expected =
+        Nx.tensor(
+          Enum.map(values, fn x ->
+            :math.cos(:math.erf(x)) * 2 / :math.sqrt(:math.pi()) * :math.exp(-x * x)
+          end)
+        )
+
+      assert_all_close(actual, expected, atol: 0.0, rtol: 5.0e-6)
+    end
+
     @int_tensor Nx.tensor([1, 2, 3])
     @float_tensor Nx.tensor([1.0, 2.0, 3.0])
 

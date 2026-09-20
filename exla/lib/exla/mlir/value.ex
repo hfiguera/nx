@@ -120,7 +120,6 @@ defmodule EXLA.MLIR.Value do
     sqrt: "stablehlo.sqrt",
     cbrt: "stablehlo.cbrt",
     bitwise_not: "stablehlo.not",
-    erf: "chlo.erf",
     erfc: "chlo.erfc",
     erf_inv: "chlo.erf_inv",
     rsqrt: "stablehlo.rsqrt",
@@ -137,6 +136,23 @@ defmodule EXLA.MLIR.Value do
       result_types = typespecs_to_mlir_types([typespec])
       op(func, unquote(op_name), [operand], result_types, []) |> one!()
     end
+  end
+
+  def erf(%Value{function: func} = operand, %{type: {:f, 32}} = typespec) do
+    # The f32 erf approximation loses accuracy near saturation. Use erfc
+    # outside the central interval, where subtraction from one is stable.
+    result_types = typespecs_to_mlir_types([typespec])
+    central = op(func, "chlo.erf", [operand], result_types) |> one!()
+    magnitude = abs(operand, typespec)
+    one = constant(func, [1], Typespec.to_shape(typespec, {})) |> broadcast_in_dim([], typespec)
+    tail = subtract(one, erfc(magnitude, typespec), typespec)
+    tail = multiply(sign(operand, typespec), tail, typespec)
+    select(less(magnitude, one, typespec), central, tail, typespec)
+  end
+
+  def erf(%Value{function: func} = operand, typespec) do
+    result_types = typespecs_to_mlir_types([typespec])
+    op(func, "chlo.erf", [operand], result_types) |> one!()
   end
 
   def is_infinity(%Value{function: func} = operand, out_typespec) do
